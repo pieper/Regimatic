@@ -89,6 +89,10 @@ class RegmaticWidget:
     self.parent.connect('mrmlSceneChanged(vtkMRMLScene*)', 
                         transformSelector, 'setMRMLScene(vtkMRMLScene*)')
 
+    # to support quicker development:
+    import os
+    if os.environ['USER'] == 'pieper':
+      RegmaticLogic().testingData()
 
     # Add vertical spacer
     self.layout.addStretch(1)
@@ -125,3 +129,44 @@ class RegmaticWidget:
     globals()[widgetName.lower()] = eval(
         'globals()["%s"].%s(parent)' % (moduleName, widgetName))
     globals()[widgetName.lower()].setup()
+
+#
+# Regmatic logic
+#
+
+class RegmaticLogic(object):
+  """ Implement a template matching optimizer that is 
+  integrated with the slicer main loop.
+  Note: currently depends on numpy/scipy installation in mac system
+  """
+
+  def __init__(self):
+    pass
+
+  def testingData(self):
+    if not slicer.util.getNodes('MRHead*'):
+      import os
+      fileName = os.environ['HOME'] + "/Dropbox/data/regmatic/MR-head.nrrd"
+      vl = slicer.modules.volumes.logic()
+      volumeNode = vl.AddArchetypeScalarVolume (fileName, "MRHead", 0)
+    if not slicer.util.getNodes('neutral*'):
+      import os
+      fileName = os.environ['HOME'] + "/Dropbox/data/regmatic/neutral.nrrd"
+      vl = slicer.modules.volumes.logic()
+      volumeNode = vl.AddArchetypeScalarVolume (fileName, "neutral", 0)
+    if not slicer.util.getNodes('Transform-head'):
+      # Create transform node
+      transform = slicer.vtkMRMLLinearTransformNode()
+      transform.SetName('Transform-head')
+      slicer.mrmlScene.AddNode(transform)
+    head = slicer.util.getNode('MRHead')
+    neutral = slicer.util.getNode('neutral')
+    transform = slicer.util.getNode('Transform-head')
+    neutral.SetAndObserveTransformNodeID(transform.GetID())
+    compositeNodes = slicer.util.getNodes('vtkMRMLSliceCompositeNode*')
+    for compositeNode in compositeNodes.values():
+      compositeNode.SetBackgroundVolumeID(head.GetID())
+      compositeNode.SetForegroundVolumeID(neutral.GetID())
+      compositeNode.SetForegroundOpacity(0.5)
+    applicationLogic = slicer.app.applicationLogic()
+    applicationLogic.FitSliceToAll()

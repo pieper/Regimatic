@@ -47,13 +47,15 @@ class RegmaticWidget:
     self.layout.addWidget(self.reloadButton)
     self.reloadButton.connect('clicked()', self.onReload)
 
-    # Collapsible button
-    parameterCollapsibleButton = ctk.ctkCollapsibleButton()
-    parameterCollapsibleButton.text = "Regmatic Parameters"
-    self.layout.addWidget(parameterCollapsibleButton)
+    #
+    # io Collapsible button
+    #
+    ioCollapsibleButton = ctk.ctkCollapsibleButton()
+    ioCollapsibleButton.text = "I/O Parameters"
+    self.layout.addWidget(ioCollapsibleButton)
 
     # Layout within the parameter collapsible button
-    parameterFormLayout = qt.QFormLayout(parameterCollapsibleButton)
+    ioFormLayout = qt.QFormLayout(ioCollapsibleButton)
 
     # Fixed Volume node selector
     self.fixedSelector = slicer.qMRMLNodeComboBox()
@@ -63,7 +65,7 @@ class RegmaticWidget:
     self.fixedSelector.noneEnabled = False
     self.fixedSelector.addEnabled = False
     self.fixedSelector.removeEnabled = False
-    parameterFormLayout.addRow("Fixed Volume:", self.fixedSelector)
+    ioFormLayout.addRow("Fixed Volume:", self.fixedSelector)
     self.fixedSelector.setMRMLScene(slicer.mrmlScene)
     self.parent.connect('mrmlSceneChanged(vtkMRMLScene*)',
                         self.fixedSelector, 'setMRMLScene(vtkMRMLScene*)')
@@ -76,7 +78,7 @@ class RegmaticWidget:
     self.movingSelector.noneEnabled = False
     self.movingSelector.addEnabled = False
     self.movingSelector.removeEnabled = False
-    parameterFormLayout.addRow("Moving Volume:", self.movingSelector)
+    ioFormLayout.addRow("Moving Volume:", self.movingSelector)
     self.movingSelector.setMRMLScene(slicer.mrmlScene)
     self.parent.connect('mrmlSceneChanged(vtkMRMLScene*)',
                         self.movingSelector, 'setMRMLScene(vtkMRMLScene*)')
@@ -89,7 +91,7 @@ class RegmaticWidget:
     self.transformSelector.noneEnabled = False
     self.transformSelector.addEnabled = False
     self.transformSelector.removeEnabled = False
-    parameterFormLayout.addRow("Moving To Fixed Transform:", self.transformSelector)
+    ioFormLayout.addRow("Moving To Fixed Transform:", self.transformSelector)
     self.transformSelector.setMRMLScene(slicer.mrmlScene)
     self.parent.connect('mrmlSceneChanged(vtkMRMLScene*)',
                         self.transformSelector, 'setMRMLScene(vtkMRMLScene*)')
@@ -97,11 +99,57 @@ class RegmaticWidget:
     for selector in selectors:
       selector.connect('currentNodeChanged(vtkMRMLNode*)', self.updateLogicFromGUI)
 
+    #
+    # opt Collapsible button
+    #
+    optCollapsibleButton = ctk.ctkCollapsibleButton()
+    optCollapsibleButton.text = "Optimizer Parameters"
+    self.layout.addWidget(optCollapsibleButton)
+
+    # Layout within the parameter collapsible button
+    optFormLayout = qt.QFormLayout(optCollapsibleButton)
+
+    # gradient window slider
+    self.sampleSpacingSlider = ctk.ctkSliderWidget()
+    self.sampleSpacingSlider.decimals = 2
+    self.sampleSpacingSlider.singleStep = 0.01
+    self.sampleSpacingSlider.minimum = 0.01
+    self.sampleSpacingSlider.maximum = 100
+    self.sampleSpacingSlider.toolTip = "Multiple of spacing used when extracting pixels to evaluate objective function"
+    optFormLayout.addRow("Sample Spacing:", self.sampleSpacingSlider)
+
+    # gradient window slider
+    self.gradientWindowSlider = ctk.ctkSliderWidget()
+    self.gradientWindowSlider.decimals = 2
+    self.gradientWindowSlider.singleStep = 0.01
+    self.gradientWindowSlider.minimum = 0.01
+    self.gradientWindowSlider.maximum = 5
+    self.gradientWindowSlider.toolTip = "Multiple of spacing used when estimating objective function gradient"
+    optFormLayout.addRow("Gradient Window:", self.gradientWindowSlider)
+
+    # step size slider
+    self.stepSizeSlider = ctk.ctkSliderWidget()
+    self.stepSizeSlider.decimals = 2
+    self.stepSizeSlider.singleStep = 0.01
+    self.stepSizeSlider.minimum = 0.01
+    self.stepSizeSlider.maximum = 5
+    self.stepSizeSlider.toolTip = "Multiple of spacing used when taking an optimization step"
+    optFormLayout.addRow("Step Size:", self.stepSizeSlider)
+
+    # get default values from logic
+    self.sampleSpacingSlider.value = self.logic.sampleSpacing
+    self.gradientWindowSlider.value = self.logic.gradientWindow
+    self.stepSizeSlider.value = self.logic.stepSize
+
+    sliders = (self.sampleSpacingSlider, self.gradientWindowSlider, self.stepSizeSlider)
+    for slider in sliders:
+      slider.connect('valueChanged(double)', self.updateLogicFromGUI)
+
     # Run button
     self.runButton = qt.QPushButton("Run")
     self.runButton.toolTip = "Run registration bot."
     self.runButton.checkable = True
-    parameterFormLayout.addRow(self.runButton)
+    optFormLayout.addRow(self.runButton)
     self.runButton.connect('toggled(bool)', self.onRunButtonToggled)
 
     # to support quicker development:
@@ -115,10 +163,13 @@ class RegmaticWidget:
     # Add vertical spacer
     self.layout.addStretch(1)
 
-  def updateLogicFromGUI(self):
+  def updateLogicFromGUI(self,args):
     self.logic.fixed = self.fixedSelector.currentNode()
     self.logic.moving = self.movingSelector.currentNode()
     self.logic.transform = self.transformSelector.currentNode()
+    self.logic.sampleSpacing = self.sampleSpacingSlider.value
+    self.logic.gradientWindow = self.gradientWindowSlider.value
+    self.logic.stepSize = self.stepSizeSlider.value
 
   def onRunButtonToggled(self, checked):
     if checked:
@@ -175,6 +226,11 @@ class RegmaticLogic(object):
     self.interval = 20
     self.timer = None
 
+    # parameter defaults
+    self.sampleSpacing = 10
+    self.gradientWindow = 1
+    self.stepSize = 1
+
     # slicer nodes set by the GUI
     self.fixed = fixed
     self.moving = moving
@@ -197,6 +253,7 @@ class RegmaticLogic(object):
   def tick(self):
     """Callback for an iteration of the registration method
     """
+    print(self.stepSize)
     pass
 
 

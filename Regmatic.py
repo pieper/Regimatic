@@ -236,6 +236,9 @@ class RegmaticLogic(object):
     self.moving = moving
     self.transform = transform
 
+    # optimizer state variables
+    self.iteration = 0
+
   def start(self):
     """Create the subprocess and set up a polling timer"""
     if self.timer:
@@ -253,8 +256,11 @@ class RegmaticLogic(object):
   def tick(self):
     """Callback for an iteration of the registration method
     """
-    print(self.stepSize)
-    pass
+    x = -100 + (self.iteration % 200)
+    m = self.transform.GetMatrixTransformToParent()
+    m.SetElement(0,3,x)
+
+    self.iteration += 1
 
 
 

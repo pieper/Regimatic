@@ -201,6 +201,7 @@ class RegimaticWidget:
 
     # rebuild the widget
     # - find and hide the existing widget
+    # - remove all the layout items
     # - create a new widget in the existing parent
     parent = slicer.util.findChildren(name='%s Reload' % moduleName)[0].parent()
     for child in parent.children():
@@ -243,6 +244,13 @@ class RegimaticLogic(object):
     # optimizer state variables
     self.iteration = 0
 
+    # helper objects
+    self.scratchMatrix = vtk.vtkMatrix4x4()
+    self.ijkToRAS = vtk.vtkMatrix4x4()
+    self.reslice = vtk.vtkImageReslice()
+    self.resliceTransform = vtk.vtkTransform()
+    self.viewer = None
+
   def start(self):
     """Create the subprocess and set up a polling timer"""
     if self.timer:
@@ -266,78 +274,50 @@ class RegimaticLogic(object):
 
     self.iteration += 1
 
+    globals()['i'] = i = self.rasArray(self.moving)
+    print(i.mean())
 
-  def rasArray(volumeNode, debug=True):
+  def rasArray(self, volumeNode, matrix=None, debug=False):
     """
     Returns a numpy array of the given node resampled into RAS space
+    If given, use the passed matrix as a final RAS to RAS transform
     """
 
+    # get the transform from image space to world space
+    volumeNode.GetIJKToRASMatrix(self.ijkToRAS)
+    transformNode = volumeNode.GetParentTransformNode()
+    if transformNode:
+      self.scratchMatrix.Identity()
+      transformNode.GetMatrixTransformToWorld(self.scratchMatrix)
+      self.ijkToRAS.Multiply4x4(self.scratchMatrix, self.ijkToRAS, self.ijkToRAS)
 
-      # make these global for debugging
-      global template_name, target_name, nodes, templateToTarget, m, tttm, reslice, viewer, viewer2
-      nodes = Slicer.slicer.ListNodes()
-      try:
-        templateToTarget
-      except NameError:
-        templateToTarget = Slicer.slicer.vtkTransform()
-        m = Slicer.slicer.vtkMatrix4x4()
-        tttm = Slicer.slicer.vtkMatrix4x4()
-        reslice = Slicer.slicer.vtkImageReslice()
-      if debug:
-        try:
-          viewer
-        except NameError:
-          viewer = Slicer.slicer.vtkImageViewer()
-          viewer2 = Slicer.slicer.vtkImageViewer()
+    if matrix:
+      self.ijkToRAS.Multiply4x4(matrix, self.ijkToRAS, self.ijkToRAS)
 
-      # start with template IJK to RAS in template to target
-      # - if a templateMatrix was passed in, use it in place of transform
-      nodes[template_name].GetIJKToRASMatrix(tttm)
-      if templateMatrix:
-         tttm.Multiply4x4(templateMatrix, tttm, tttm)
-      else:
-        tnode = nodes[template_name].GetParentTransformNode()
-        if tnode:
-           m.Identity()
-           tnode.GetMatrixTransformToWorld(m)
-           tttm.Multiply4x4(m, tttm, tttm)
+    # use the matrix to extract the volume and convert it to an array
+    self.reslice.SetInterpolationModeToLinear()
+    self.reslice.InterpolateOn()
+    self.resliceTransform.SetMatrix(self.ijkToRAS)
+    self.reslice.SetResliceTransform(self.resliceTransform)
+    # TODO: set the dimensions and spacing
+    #self.reslice.SetInformationInput( nodes[template_name].GetImageData() )
+    self.reslice.SetInput( volumeNode.GetImageData() )
+    self.reslice.UpdateWholeExtent()
+    rasImage = self.reslice.GetOutput()
+    shape = list(rasImage.GetDimensions())
+    shape.reverse()
+    rasArray = vtk.util.numpy_support.vtk_to_numpy(rasImage.GetPointData().GetScalars()).reshape(shape)
 
+    if debug:
+      if not self.viewer:
+          viewer = vtk.vtkImageViewer()
+      viewer.SetColorWindow( 1000 )
+      viewer.SetColorLevel( 500 )
+      viewer.SetInput( rasImage )
+      viewer.SetZSlice( rasArray.shape[2]/2 )
+      viewer.Render()
 
-      # now go back from RAS to target IJK
-      tnode = nodes[target_name].GetParentTransformNode()
-      if tnode:
-         m.Identity()
-         tnode.GetMatrixTransformToWorld(m)
-         m.Invert()
-         tttm.Multiply4x4(m, tttm, tttm)
-      nodes[target_name].GetIJKToRASMatrix(m)
-      m.Invert()
-      tttm.Multiply4x4(m, tttm, tttm)
-
-      # templateToTarget matrix (tttm) now maps from template pixel space to target pixel space
-      # - no make it so output of reslice will be same size as template
-      reslice.SetInterpolationModeToLinear()
-      reslice.InterpolateOn()
-      templateToTarget.SetMatrix(tttm)
-      reslice.SetResliceTransform(templateToTarget)
-      reslice.SetInformationInput( nodes[template_name].GetImageData() )
-      reslice.SetInput( nodes[target_name].GetImageData() )
-      reslice.UpdateWholeExtent()
-      result = reslice.GetOutput().ToArray()
-
-      if debug:
-        viewer.SetColorWindow( 1000 )
-        viewer.SetColorLevel( 500 )
-        viewer.SetInput( reslice.GetOutput() )
-        viewer.SetZSlice( result.shape[2]/2 )
-        viewer.Render()
-        viewer2.SetColorWindow( 1000 )
-        viewer2.SetColorLevel( 500 )
-        viewer2.SetInput( nodes[template_name].GetImageData() )
-        viewer2.SetZSlice( result.shape[2]/2 )
-        viewer2.Render()
-
-      return result
+    return rasArray
 
   def testingData(self):
     """Load some default data for development

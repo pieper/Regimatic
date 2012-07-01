@@ -47,9 +47,6 @@ class RegimaticWidget:
     self.layout.addWidget(self.reloadButton)
     self.reloadButton.connect('clicked()', self.onReload)
 
-    self.testButton = qt.QCheckBox("test")
-    self.layout.addWidget(self.testButton)
-
     #
     # io Collapsible button
     #
@@ -103,7 +100,7 @@ class RegimaticWidget:
       selector.connect('currentNodeChanged(vtkMRMLNode*)', self.updateLogicFromGUI)
 
     #
-    # opt Collapsible button
+    # optimizer Collapsible button
     #
     optCollapsibleButton = ctk.ctkCollapsibleButton()
     optCollapsibleButton.text = "Optimizer Parameters"

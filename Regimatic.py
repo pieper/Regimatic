@@ -1,12 +1,12 @@
 from __main__ import vtk, qt, ctk, slicer
 
 #
-# Regmatic
+# Regimatic
 #
 
-class Regmatic:
+class Regimatic:
   def __init__(self, parent):
-    parent.title = "Regmatic"
+    parent.title = "Regimatic"
     parent.categories = ["Registration"]
     parent.dependencies = []
     parent.contributors = ["Steve Pieper (Isomics)"] # replace with "Firstname Lastname (Org)"
@@ -19,10 +19,10 @@ class Regmatic:
     self.parent = parent
 
 #
-# qRegmaticWidget
+# qRegimaticWidget
 #
 
-class RegmaticWidget:
+class RegimaticWidget:
   def __init__(self, parent = None):
     if not parent:
       self.parent = slicer.qMRMLWidget()
@@ -35,7 +35,7 @@ class RegmaticWidget:
       self.setup()
       self.parent.show()
 
-    self.logic = RegmaticLogic()
+    self.logic = RegimaticLogic()
 
   def setup(self):
     # Instantiate and connect widgets ...
@@ -43,15 +43,18 @@ class RegmaticWidget:
     # reload button
     self.reloadButton = qt.QPushButton("Reload")
     self.reloadButton.toolTip = "Reload this module."
-    self.reloadButton.name = "Regmatic Reload"
+    self.reloadButton.name = "Regimatic Reload"
     self.layout.addWidget(self.reloadButton)
     self.reloadButton.connect('clicked()', self.onReload)
+
+    self.testButton = qt.QCheckBox("test")
+    self.layout.addWidget(self.testButton)
 
     #
     # io Collapsible button
     #
     ioCollapsibleButton = ctk.ctkCollapsibleButton()
-    ioCollapsibleButton.text = "I/O Parameters"
+    ioCollapsibleButton.text = "Volume and Transform Parameters"
     self.layout.addWidget(ioCollapsibleButton)
 
     # Layout within the parameter collapsible button
@@ -179,7 +182,7 @@ class RegmaticWidget:
       self.logic.stop()
       self.runButton.text = "Run"
 
-  def onReload(self,moduleName="Regmatic"):
+  def onReload(self,moduleName="Regimatic"):
     """Generic reload method for any scripted module.
     ModuleWizard will subsitute correct default moduleName.
     """
@@ -213,10 +216,10 @@ class RegmaticWidget:
     globals()[widgetName.lower()].setup()
 
 #
-# Regmatic logic
+# Regimatic logic
 #
 
-class RegmaticLogic(object):
+class RegimaticLogic(object):
   """ Implement a template matching optimizer that is
   integrated with the slicer main loop.
   Note: currently depends on numpy/scipy installation in mac system
@@ -263,6 +266,77 @@ class RegmaticLogic(object):
     self.iteration += 1
 
 
+  def rasArray(volumeNode, debug=True):
+    """
+    Returns a numpy array of the given node resampled into RAS space
+    """
+
+
+      # make these global for debugging
+      global template_name, target_name, nodes, templateToTarget, m, tttm, reslice, viewer, viewer2
+      nodes = Slicer.slicer.ListNodes()
+      try:
+        templateToTarget
+      except NameError:
+        templateToTarget = Slicer.slicer.vtkTransform()
+        m = Slicer.slicer.vtkMatrix4x4()
+        tttm = Slicer.slicer.vtkMatrix4x4()
+        reslice = Slicer.slicer.vtkImageReslice()
+      if debug:
+        try:
+          viewer
+        except NameError:
+          viewer = Slicer.slicer.vtkImageViewer()
+          viewer2 = Slicer.slicer.vtkImageViewer()
+
+      # start with template IJK to RAS in template to target
+      # - if a templateMatrix was passed in, use it in place of transform
+      nodes[template_name].GetIJKToRASMatrix(tttm)
+      if templateMatrix:
+         tttm.Multiply4x4(templateMatrix, tttm, tttm)
+      else:
+        tnode = nodes[template_name].GetParentTransformNode()
+        if tnode:
+           m.Identity()
+           tnode.GetMatrixTransformToWorld(m)
+           tttm.Multiply4x4(m, tttm, tttm)
+
+
+      # now go back from RAS to target IJK
+      tnode = nodes[target_name].GetParentTransformNode()
+      if tnode:
+         m.Identity()
+         tnode.GetMatrixTransformToWorld(m)
+         m.Invert()
+         tttm.Multiply4x4(m, tttm, tttm)
+      nodes[target_name].GetIJKToRASMatrix(m)
+      m.Invert()
+      tttm.Multiply4x4(m, tttm, tttm)
+
+      # templateToTarget matrix (tttm) now maps from template pixel space to target pixel space
+      # - no make it so output of reslice will be same size as template
+      reslice.SetInterpolationModeToLinear()
+      reslice.InterpolateOn()
+      templateToTarget.SetMatrix(tttm)
+      reslice.SetResliceTransform(templateToTarget)
+      reslice.SetInformationInput( nodes[template_name].GetImageData() )
+      reslice.SetInput( nodes[target_name].GetImageData() )
+      reslice.UpdateWholeExtent()
+      result = reslice.GetOutput().ToArray()
+
+      if debug:
+        viewer.SetColorWindow( 1000 )
+        viewer.SetColorLevel( 500 )
+        viewer.SetInput( reslice.GetOutput() )
+        viewer.SetZSlice( result.shape[2]/2 )
+        viewer.Render()
+        viewer2.SetColorWindow( 1000 )
+        viewer2.SetColorLevel( 500 )
+        viewer2.SetInput( nodes[template_name].GetImageData() )
+        viewer2.SetZSlice( result.shape[2]/2 )
+        viewer2.Render()
+
+      return result
 
   def testingData(self):
     """Load some default data for development

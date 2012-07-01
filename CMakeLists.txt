@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.8.7)
 
 #-----------------------------------------------------------------------------
-set(MODULE_NAME Regmatic) # Do not use 'project()'
+set(MODULE_NAME Regimatic) # Do not use 'project()'
 
 #-----------------------------------------------------------------------------
 if(NOT Slicer_SOURCE_DIR)
@@ -10,8 +10,8 @@ if(NOT Slicer_SOURCE_DIR)
   set(MODULE_STATUS "Beta")
   set(MODULE_CONTRIBUTORS "Jean-Christophe Fillion-Robin (Kitware)")
   set(MODULE_DESCRIPTION "This is an example of scripted Qt loadable module built as an extension")
-  set(MODULE_ICONURL "http://viewvc.slicer.org/viewvc.cgi/Slicer4/trunk/Extensions/Testing/Regmatic/Resources/Icons/Regmatic.png?revision=19437&view=co")
-  set(MODULE_SCREENSHOTURLS "http://wiki.slicer.org/slicerWiki/images/e/e2/Slicer-r19441-Regmatic-screenshot.png")
+  set(MODULE_ICONURL "http://viewvc.slicer.org/viewvc.cgi/Slicer4/trunk/Extensions/Testing/Regimatic/Resources/Icons/Regimatic.png?revision=19437&view=co")
+  set(MODULE_SCREENSHOTURLS "http://wiki.slicer.org/slicerWiki/images/e/e2/Slicer-r19441-Regimatic-screenshot.png")
 endif()
 
 #-----------------------------------------------------------------------------
@@ -22,7 +22,7 @@ endif()
 
 #-----------------------------------------------------------------------------
 set(KIT_PYTHON_SCRIPTS
-  Regmatic.py
+  Regimatic.py
   )
 
 set(KIT_PYTHON_RESOURCES
@@ -30,7 +30,7 @@ set(KIT_PYTHON_RESOURCES
 
 #-----------------------------------------------------------------------------
 ctkMacroCompilePythonScript(
-  TARGET_NAME Regmatic
+  TARGET_NAME Regimatic
   SCRIPTS "${KIT_PYTHON_SCRIPTS}"
   RESOURCES "${KIT_PYTHON_RESOURCES}"
   DESTINATION_DIR ${CMAKE_BINARY_DIR}/${Slicer_QTSCRIPTEDMODULES_LIB_DIR}

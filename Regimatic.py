@@ -1,4 +1,4 @@
-from __main__ import vtk, qt, ctk, slicer
+from __main__ import numpy, vtk, qt, ctk, slicer
 
 #
 # Regimatic
@@ -247,6 +247,7 @@ class RegimaticLogic(object):
     # helper objects
     self.scratchMatrix = vtk.vtkMatrix4x4()
     self.ijkToRAS = vtk.vtkMatrix4x4()
+    self.rasToIJK = vtk.vtkMatrix4x4()
     self.reslice = vtk.vtkImageReslice()
     self.resliceTransform = vtk.vtkTransform()
     self.viewer = None
@@ -274,10 +275,13 @@ class RegimaticLogic(object):
 
     self.iteration += 1
 
-    globals()['i'] = i = self.rasArray(self.moving)
-    print(i.mean())
+    movingRASArray = self.rasArray(self.moving, None, self.fixed)
+    fixedRASArray = self.rasArray(self.fixed, None, self.fixed)
 
-  def rasArray(self, volumeNode, matrix=None, debug=False):
+    weight = numpy.sum(numpy.abs(movingRASArray-fixedRASArray))
+    print(weight)
+
+  def rasArray(self, volumeNode, matrix=None, targetNode=None, debug=True):
     """
     Returns a numpy array of the given node resampled into RAS space
     If given, use the passed matrix as a final RAS to RAS transform
@@ -294,10 +298,13 @@ class RegimaticLogic(object):
     if matrix:
       self.ijkToRAS.Multiply4x4(matrix, self.ijkToRAS, self.ijkToRAS)
 
+    self.rasToIJK.DeepCopy(self.ijkToRAS)
+    self.rasToIJK.Invert()
+
     # use the matrix to extract the volume and convert it to an array
     self.reslice.SetInterpolationModeToLinear()
     self.reslice.InterpolateOn()
-    self.resliceTransform.SetMatrix(self.ijkToRAS)
+    self.resliceTransform.SetMatrix(self.rasToIJK)
     self.reslice.SetResliceTransform(self.resliceTransform)
     # TODO: set the dimensions and spacing
     #self.reslice.SetInformationInput( nodes[template_name].GetImageData() )
@@ -308,14 +315,29 @@ class RegimaticLogic(object):
     shape.reverse()
     rasArray = vtk.util.numpy_support.vtk_to_numpy(rasImage.GetPointData().GetScalars()).reshape(shape)
 
+    if targetNode:
+      bounds = [0,]*6
+      targetNode.GetRASBounds(bounds)
+      self.reslice.SetOutputExtent(0, (bounds[1]-bounds[0])/self.sampleSpacing,
+                                   0, (bounds[3]-bounds[2])/self.sampleSpacing,
+                                   0, (bounds[5]-bounds[4])/self.sampleSpacing)
+      self.reslice.SetOutputOrigin(bounds[0],bounds[2],bounds[4])
+
+    self.reslice.SetOutputSpacing([self.sampleSpacing,]*3)
+
     if debug:
       if not self.viewer:
-          viewer = vtk.vtkImageViewer()
-      viewer.SetColorWindow( 1000 )
-      viewer.SetColorLevel( 500 )
-      viewer.SetInput( rasImage )
-      viewer.SetZSlice( rasArray.shape[2]/2 )
-      viewer.Render()
+          self.viewer = vtk.vtkImageViewer()
+      self.viewer.SetColorWindow( 500 )
+      self.viewer.SetColorLevel( 200 )
+      self.viewer.SetInput( rasImage )
+      self.viewer.SetZSlice( rasArray.shape[2]/2 )
+      self.viewer.Render()
+      import random
+      if random.randint(0,20) == 10:
+        for z in xrange(rasArray.shape[2]):
+          self.viewer.SetZSlice( z )
+          self.viewer.Render()
 
     return rasArray
 

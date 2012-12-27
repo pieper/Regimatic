@@ -225,7 +225,6 @@ class RegimaticWidget:
 class RegimaticLogic(object):
   """ Implement a template matching optimizer that is
   integrated with the slicer main loop.
-  Note: currently depends on numpy/scipy installation in mac system
   """
 
   def __init__(self,fixed=None,moving=None,transform=None):

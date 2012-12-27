@@ -114,7 +114,7 @@ class RegimaticWidget:
     self.sampleSpacingSlider = ctk.ctkSliderWidget()
     self.sampleSpacingSlider.decimals = 2
     self.sampleSpacingSlider.singleStep = 0.01
-    self.sampleSpacingSlider.minimum = 0.01
+    self.sampleSpacingSlider.minimum = 0.1
     self.sampleSpacingSlider.maximum = 100
     self.sampleSpacingSlider.toolTip = "Multiple of spacing used when extracting pixels to evaluate objective function"
     optFormLayout.addRow("Sample Spacing:", self.sampleSpacingSlider)

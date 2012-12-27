@@ -333,11 +333,6 @@ class RegimaticLogic(object):
       self.viewer.SetInput( rasImage )
       self.viewer.SetZSlice( rasArray.shape[2]/2 )
       self.viewer.Render()
-      import random
-      if random.randint(0,20) == 10:
-        for z in xrange(rasArray.shape[2]):
-          self.viewer.SetZSlice( z )
-          self.viewer.Render()
 
     return rasArray
 

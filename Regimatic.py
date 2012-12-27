@@ -278,8 +278,8 @@ class RegimaticLogic(object):
     movingRASArray = self.rasArray(self.moving, None, self.fixed)
     fixedRASArray = self.rasArray(self.fixed, None, self.fixed)
 
-    weight = numpy.sum(numpy.abs(movingRASArray-fixedRASArray))
-    print(weight)
+    self.weight = numpy.sum(numpy.abs(movingRASArray-fixedRASArray))
+    print(self.weight)
 
   def rasArray(self, volumeNode, matrix=None, targetNode=None, debug=True):
     """
@@ -302,18 +302,12 @@ class RegimaticLogic(object):
     self.rasToIJK.Invert()
 
     # use the matrix to extract the volume and convert it to an array
+
     self.reslice.SetInterpolationModeToLinear()
     self.reslice.InterpolateOn()
     self.resliceTransform.SetMatrix(self.rasToIJK)
     self.reslice.SetResliceTransform(self.resliceTransform)
-    # TODO: set the dimensions and spacing
-    #self.reslice.SetInformationInput( nodes[template_name].GetImageData() )
     self.reslice.SetInput( volumeNode.GetImageData() )
-    self.reslice.UpdateWholeExtent()
-    rasImage = self.reslice.GetOutput()
-    shape = list(rasImage.GetDimensions())
-    shape.reverse()
-    rasArray = vtk.util.numpy_support.vtk_to_numpy(rasImage.GetPointData().GetScalars()).reshape(shape)
 
     if targetNode:
       bounds = [0,]*6
@@ -322,8 +316,14 @@ class RegimaticLogic(object):
                                    0, (bounds[3]-bounds[2])/self.sampleSpacing,
                                    0, (bounds[5]-bounds[4])/self.sampleSpacing)
       self.reslice.SetOutputOrigin(bounds[0],bounds[2],bounds[4])
-
     self.reslice.SetOutputSpacing([self.sampleSpacing,]*3)
+
+    self.reslice.UpdateWholeExtent()
+    rasImage = self.reslice.GetOutput()
+    shape = list(rasImage.GetDimensions())
+    shape.reverse()
+    rasArray = vtk.util.numpy_support.vtk_to_numpy(rasImage.GetPointData().GetScalars()).reshape(shape)
+
 
     if debug:
       if not self.viewer:

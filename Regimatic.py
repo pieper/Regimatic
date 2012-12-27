@@ -1,4 +1,5 @@
-from __main__ import numpy, vtk, qt, ctk, slicer
+from __main__ import vtk, qt, ctk, slicer
+import numpy
 
 #
 # Regimatic
@@ -349,12 +350,12 @@ class RegimaticLogic(object):
       import os
       fileName = os.environ['HOME'] + "/Dropbox/data/regmatic/MR-head.nrrd"
       vl = slicer.modules.volumes.logic()
-      volumeNode = vl.AddArchetypeScalarVolume (fileName, "MRHead", 0)
+      volumeNode = vl.AddArchetypeScalarVolume (fileName, "MRHead", 0, None)
     if not slicer.util.getNodes('neutral*'):
       import os
       fileName = os.environ['HOME'] + "/Dropbox/data/regmatic/neutral.nrrd"
       vl = slicer.modules.volumes.logic()
-      volumeNode = vl.AddArchetypeScalarVolume (fileName, "neutral", 0)
+      volumeNode = vl.AddArchetypeScalarVolume (fileName, "neutral", 0, None)
     if not slicer.util.getNodes('movingToFixed'):
       # Create transform node
       transform = slicer.vtkMRMLLinearTransformNode()

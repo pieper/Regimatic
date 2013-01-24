@@ -110,7 +110,8 @@ class RegimaticWidget:
     # Layout within the parameter collapsible button
     optFormLayout = qt.QFormLayout(optCollapsibleButton)
 
-    # gradient window slider
+    # sample spacing
+    # TODO: change this to be a pixel fraction (then scale spacings accordingly)
     self.sampleSpacingSlider = ctk.ctkSliderWidget()
     self.sampleSpacingSlider.decimals = 2
     self.sampleSpacingSlider.singleStep = 0.01
@@ -136,6 +137,21 @@ class RegimaticWidget:
     self.stepSizeSlider.maximum = 5
     self.stepSizeSlider.toolTip = "Multiple of spacing used when taking an optimization step"
     optFormLayout.addRow("Step Size:", self.stepSizeSlider)
+
+    # TODO: add interpolation options: nearest, linear, cubic 
+
+    # TODO: add input image normaliztaion
+
+    # TODO: add MI or other metrics
+
+    # TODO: add output chart showing optimizer values
+
+    # TODO: add quaternion optimization
+    # -> scale for rotational gradient
+    # OR: add multipoint localized gradient estimation and
+    #     back-calculate rotation based on that
+
+
 
     # get default values from logic
     self.sampleSpacingSlider.value = self.logic.sampleSpacing

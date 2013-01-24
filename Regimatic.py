@@ -114,7 +114,7 @@ class RegimaticWidget:
     self.sampleSpacingSlider = ctk.ctkSliderWidget()
     self.sampleSpacingSlider.decimals = 2
     self.sampleSpacingSlider.singleStep = 0.01
-    self.sampleSpacingSlider.minimum = 0.1
+    self.sampleSpacingSlider.minimum = 0.5
     self.sampleSpacingSlider.maximum = 100
     self.sampleSpacingSlider.toolTip = "Multiple of spacing used when extracting pixels to evaluate objective function"
     optFormLayout.addRow("Sample Spacing:", self.sampleSpacingSlider)
@@ -243,6 +243,7 @@ class RegimaticLogic(object):
 
     # optimizer state variables
     self.iteration = 0
+    self.metric = 0
 
     # helper objects
     self.scratchMatrix = vtk.vtkMatrix4x4()
@@ -266,20 +267,49 @@ class RegimaticLogic(object):
       self.timer.stop()
       self.timer = None
 
+  def f(self,deltaM):
+    """Evaluate the metric with an offset deltaM from the current transform"""
+    movingRASArray = self.rasArray(self.moving, deltaM, self.fixed)
+    pixelCount = reduce(lambda x,y: x*y, movingRASArray.shape)
+    return numpy.sum(numpy.abs(movingRASArray-self.fixedRASArray)) / (1.0 * pixelCount)
+
+  def dfdm(self):
+    """Evaluate the gradient"""
+    deltaM = vtk.vtkMatrix4x4()
+    gradient = numpy.array((0.,0.,0.))
+    oneOver2Window = 1. / (2*self.gradientWindow)
+    for direction in xrange(3):
+      deltaM.SetElement(direction,3,self.gradientWindow)
+      mplus = self.f(deltaM)
+      deltaM.SetElement(direction,3,-self.gradientWindow)
+      mminus = self.f(deltaM)
+      gradient[direction] = (mplus - mminus) * oneOver2Window
+    return gradient
+
   def tick(self):
     """Callback for an iteration of the registration method
     """
-    x = -100 + (self.iteration % 200)
+
+    self.fixedRASArray = self.rasArray(self.fixed, None, self.fixed)
+    movingRASArray = self.rasArray(self.moving, None, self.fixed)
+    self.metric = numpy.sum(numpy.abs(movingRASArray-self.fixedRASArray))
     m = self.transform.GetMatrixTransformToParent()
-    m.SetElement(0,3,x)
+
+    gradient = self.dfdm()
+
+    self.transform.SetDisableModifiedEvent(True)
+    for direction in xrange(3):
+      oldValue = m.GetElement(direction,3)
+      step = self.stepSize * gradient[direction]
+      m.SetElement(direction,3,oldValue+step)
+    self.transform.SetDisableModifiedEvent(False)
+    self.transform.InvokePendingModifiedEvent()
 
     self.iteration += 1
-
-    movingRASArray = self.rasArray(self.moving, None, self.fixed)
-    fixedRASArray = self.rasArray(self.fixed, None, self.fixed)
-
-    self.weight = numpy.sum(numpy.abs(movingRASArray-fixedRASArray))
-    print(self.weight)
+    slicer.util.showStatusMessage("%s: %s (%s)" % (
+      str(self.iteration),
+      str(self.metric),
+      str(gradient)))
 
   def rasArray(self, volumeNode, matrix=None, targetNode=None, debug=True):
     """

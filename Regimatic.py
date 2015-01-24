@@ -124,7 +124,7 @@ class RegimaticWidget(ScriptedLoadableModuleWidget):
     self.stepSizeSlider.toolTip = "Multiple of spacing used when taking an optimization step"
     optFormLayout.addRow("Step Size:", self.stepSizeSlider)
 
-    # TODO: add interpolation options: nearest, linear, cubic 
+    # TODO: add interpolation options: nearest, linear, cubic
 
     # TODO: add input image normaliztaion
 
@@ -175,49 +175,181 @@ class RegimaticWidget(ScriptedLoadableModuleWidget):
       self.logic.stop()
       self.runButton.text = "Run"
 
-  def onReload(self,moduleName="Regimatic"):
-    """Generic reload method for any scripted module.
-    ModuleWizard will subsitute correct default moduleName.
-    """
-    import imp, sys, os, slicer
-
-    widgetName = moduleName + "Widget"
-
-    # reload the source code
-    # - set source file path
-    # - load the module to the global space
-    filePath = eval('slicer.modules.%s.path' % moduleName.lower())
-    p = os.path.dirname(filePath)
-    if not sys.path.__contains__(p):
-      sys.path.insert(0,p)
-    fp = open(filePath, "r")
-    globals()[moduleName] = imp.load_module(
-        moduleName, fp, filePath, ('.py', 'r', imp.PY_SOURCE))
-    fp.close()
-
-    # rebuild the widget
-    # - find and hide the existing widget
-    # - remove all the layout items
-    # - create a new widget in the existing parent
-    parent = slicer.util.findChildren(name='%s Reload' % moduleName)[0].parent()
-    for child in parent.children():
-      try:
-        child.hide()
-      except AttributeError:
-        pass
-    item = parent.layout().itemAt(0)
-    while item:
-      parent.layout().removeItem(item)
-      item = parent.layout().itemAt(0)
-    globals()[widgetName.lower()] = eval(
-        'globals()["%s"].%s(parent)' % (moduleName, widgetName))
-    globals()[widgetName.lower()].setup()
 
 #
 # Regimatic logic
 #
+# TODO: this uses the generic word "transform" but
+# is currently coded only for vtkMatrix4x4.  Later it
+# is possible to generalize this for vtkTransforms
+# that could be of type BSpline or ThinPlatSpline for example.
+#
 
-class RegimaticLogic(object):
+# first, parametric transform helper classes
+
+class RegimaticParameter(object):
+  """Helper to encapsulate a transform parameter"""
+  def __init__(self, name="Unnamed", value=0., deltaScale=1., bounds=[None,None]):
+    self.name = name
+    self.value = value # float
+    self.deltaScale = deltaScale # mapping from step to parameter space
+    self.bounds = bounds # upper and lower valid values
+
+class RegimaticParametricTransform:
+  """Generic class to implement mappings from parameters to transforms
+  so they can be used with the interactive gradient descent optimizer.
+  Subclasses should override these methods."""
+
+  def __init__(self):
+    self.parameters = [] # list of RegimaticParameter instances
+    self.currentTransform = vtk.vtkMatrix4x4()
+
+  def setP(self,p):
+    index,value = p
+    self.parameters[index].value=value
+
+  def getP(self,index):
+    return self.parameters[index].value
+
+  def getTransform(self, deltaP=(-1,1)):
+    """Returns a transform based on changing the indicated parameter
+    by the indicated amount (used for central difference gradient calculations)
+    No deltaP means return current value.
+    deltaP is of the form (index,delta) to apply a delta to the index'th parameter
+    """
+    return self.currentTransform # needs to be overridden
+
+  def setTransform(self, transform):
+    """Need to set internal parameters to match passed transform
+    """
+    self.currentTransform = transform # needs to be overridden
+
+class RegimaticTranslationTransform(RegimaticParametricTransform):
+  """Implements a pure translation transform
+  """
+  def __init__(self):
+    self.parameters = []
+    self.parameters.append(RegimaticParameter("Tx"))
+    self.parameters.append(RegimaticParameter("Ty"))
+    self.parameters.append(RegimaticParameter("Tz"))
+    self.currentTransform = vtk.vtkMatrix4x4()
+
+  def getTransform(self, deltaP=(-1,1.)):
+    """Puts calculates a matrix from parameters
+    """
+    index,delta = deltaP
+    for parameterIndex in xrange(3):
+      value = self.parameters[parameterIndex].value
+      if parameterIndex == index:
+        value += self.parameters[parameterIndex].deltaScale * delta
+      self.currentTransform.SetElement(parameterIndex,3, value)
+    return self.currentTransform
+
+  def setTransform(self, transform):
+    """Calculates parameters from matrix
+    """
+    self.currentTransform.DeepCopy(transform)
+    for parameterIndex in xrange(3):
+      self.parameters[parameterIndex].value = transform.GetElement(parameterIndex,3)
+
+class RegimaticRigidTransform(RegimaticTranslationTransform):
+  """Implements a pure rigid transform
+  """
+  def __init__(self):
+    RegimaticTranslationTransform.__init__(self)
+    self.parameters.append(RegimaticParameter("Qa",value=1.,deltaScale=0.0000001))
+    self.parameters.append(RegimaticParameter("Qb",value=0.,deltaScale=0.0000001))
+    self.parameters.append(RegimaticParameter("Qc",value=0.,deltaScale=0.0000001))
+    self.parameters.append(RegimaticParameter("Qd",value=0.,deltaScale=0.0000001))
+
+  def getTransform(self, deltaP=(-1,1)):
+    """Puts calculates a matrix from parameters
+    """
+    RegimaticTranslationTransform.getTransform(self,deltaP)
+    index,delta = deltaP
+    quaternion = numpy.zeros(4)
+    for parameterIndex in xrange(3,7):
+      value = self.parameters[parameterIndex].value
+      if parameterIndex == index:
+        value += self.parameters[parameterIndex].deltaScale * delta
+      quaternion[parameterIndex-3] = value
+    quaternion = quaternion / numpy.linalg.norm(quaternion)
+    rotation = self.rotation(quaternion)
+    for row in xrange(3):
+      for column in xrange(3):
+        self.currentTransform.SetElement(row,column, rotation[row,column])
+    return self.currentTransform
+
+  def setTransform(self, transform):
+    """Calculates parameters from matrix
+    """
+    RegimaticTranslationTransform.setTransform(self,transform)
+    rotation = numpy.identity(3)
+    for row in xrange(3):
+      for column in xrange(3):
+        rotation[row,column] = self.currentTransform.GetElement(row,column)
+    quaternion = self.quaternion(rotation)
+    for parameterIndex in xrange(3,7):
+      self.parameters[parameterIndex].value = quaternion[parameterIndex-3]
+
+
+  """rotation/quaternion utilities
+    See:  http://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation#Conversion_to_and_from_the_matrix_representation
+  """
+
+  def rotation(self,quat):
+    """ build and return a 3x3 transformation matrix from a quaternion
+        >>> rotation([1,0,0,0])
+        array([[ 1.,  0.,  0.],
+               [ 0.,  1.,  0.],
+               [ 0.,  0.,  1.]])
+    """
+
+    quat = numpy.asmatrix(quat, dtype='Float64')
+    quat /= numpy.sqrt(quat * quat.transpose())
+    a,b,c,d           =  numpy.asarray(quat)[0]
+    aa, bb, cc, dd    =  a*a, b*b, c*c, d*d
+    ab, ac, ad        =  a*b, a*c, a*d
+    bc, bd, cd        =  b*c, b*d, c*d
+
+    Rot = numpy.matrix([[ aa + bb - cc - dd,  2.0 * (-ad + bc),    2.0*(ac + bd)     ],
+                      [ 2.0 * (ad + bc),   aa - bb + cc - dd,  2.0 * (-ab + cd)   ],
+                      [ 2.0 * (ac + bd),    2.0 * (ab + cd),   aa - bb - cc + dd ]])
+    return(Rot)
+
+
+  def quaternion(self,Rot):
+    """ extract the quaternion from a matrix (assume upper 3x3 is rotation only)
+    """
+
+    # find the permutation that is most stable (largest diagonal first)
+    xx, yy, zz = abs(Rot[0,0]), abs(Rot[1,1]), abs(Rot[2,2])
+    if xx > yy and xx > zz:
+      u, v, w = 0, 1, 2
+    else:
+      if yy > xx and yy > zz:
+        u, v, w = 1, 2, 0
+      else:
+        u, v, w = 2, 0, 1
+
+    # fill in the quat
+    r = numpy.sqrt( 1 + Rot[u,u] - Rot[v,v] - Rot[w,w] )
+    r2 = 2.*r
+
+    if r < 1e-6:
+      return numpy.array([1,0,0,0])
+
+    quat = numpy.zeros(4)
+    quat[  0] = (Rot[w,v] - Rot[v,w])/r2
+    quat[1+u] = r/2.
+    quat[1+v] = (Rot[u,v] + Rot[v,u])/r2
+    quat[1+w] = (Rot[w,u] + Rot[u,w])/r2
+
+    return quat
+
+
+
+class RegimaticLogic(ScriptedLoadableModuleLogic):
   """ Implement a template matching optimizer that is
   integrated with the slicer main loop.
   """
@@ -227,9 +359,13 @@ class RegimaticLogic(object):
     self.timer = None
 
     # parameter defaults
-    self.sampleSpacing = 10
+    self.sampleSpacing = 3
     self.gradientWindow = 1
     self.stepSize = 1
+
+    # the parametricTransform
+    self.parametricTransform = RegimaticTranslationTransform()
+    #self.parametricTransform = RegimaticRigidTransform() #TODO: fix quaternion
 
     # slicer nodes set by the GUI
     self.fixed = fixed
@@ -263,23 +399,26 @@ class RegimaticLogic(object):
       self.timer.stop()
       self.timer = None
 
-  def f(self,deltaM):
+  def f(self,deltaP):
     """Evaluate the metric with an offset deltaM from the current transform"""
+    deltaM = self.parametricTransform.getTransform(deltaP)
     movingRASArray = self.rasArray(self.moving, deltaM, self.fixed)
     pixelCount = reduce(lambda x,y: x*y, movingRASArray.shape)
     return numpy.sum(numpy.abs(movingRASArray-self.fixedRASArray)) / (1.0 * pixelCount)
 
-  def dfdm(self):
-    """Evaluate the gradient"""
-    deltaM = vtk.vtkMatrix4x4()
-    gradient = numpy.array((0.,0.,0.))
+  def dfdp(self):
+    """Evaluate the gradient with respect to the parameters (central difference)"""
+    pt = self.parametricTransform # shorthand
+    parameterCount = len(pt.parameters)
+    gradient = numpy.zeros(parameterCount)
     oneOver2Window = 1. / (2*self.gradientWindow)
-    for direction in xrange(3):
-      deltaM.SetElement(direction,3,self.gradientWindow)
-      mplus = self.f(deltaM)
-      deltaM.SetElement(direction,3,-self.gradientWindow)
-      mminus = self.f(deltaM)
-      gradient[direction] = (mplus - mminus) * oneOver2Window
+    for index in xrange(parameterCount):
+      deltaP = (index,self.gradientWindow)
+      metricPlus = self.f(deltaP)
+      deltaP = (index,-self.gradientWindow)
+      metricMinus = self.f(deltaP)
+      gradient[index] = (metricPlus - metricMinus) * oneOver2Window
+    gradient = gradient / numpy.linalg.norm(gradient)
     return gradient
 
   def tick(self):
@@ -294,15 +433,20 @@ class RegimaticLogic(object):
     # current transform
     self.transform.GetMatrixTransformToParent(self.matrixToParent)
 
+    pt = self.parametricTransform # shorthand
+    pt.setTransform(self.matrixToParent)
+
     # calculate the gradient with respect to the parameters
     gradient = self.dfdp()
 
     # take a step along the gradient
-    for direction in xrange(3):
-      oldValue = self.matrixToParent.GetElement(direction,3)
-      step = self.stepSize * gradient[direction]
-      self.matrixToParent.SetElement(direction,3,oldValue-step)
-    self.transform.SetMatrixTransformToParent(self.matrixToParent)
+    parameterCount = len(pt.parameters)
+    for parameterIndex in xrange(parameterCount):
+      oldValue = pt.getP(parameterIndex)
+      step = self.stepSize * gradient[parameterIndex]
+      pt.setP((parameterIndex,oldValue-step))
+    self.transform.SetMatrixTransformToParent(pt.getTransform())
+
 
     # provide a little feedback
     self.iteration += 1
@@ -363,67 +507,11 @@ class RegimaticLogic(object):
       self.viewer.SetInputData( rasImage )
       self.viewer.SetZSlice( rasArray.shape[2]/2 )
       self.viewer.Render()
-      
+
 
     slicer.modules.RegimaticWidget.rasArray  = rasArray
 
     return rasArray
-
-
-  """rotation/quaternion utilities
-    See:  http://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation#Conversion_to_and_from_the_matrix_representation
-  """
-
-  def rotation(self,quat):
-    """ build and return a 3x3 transformation matrix from a quaternion
-        >>> rotation([1,0,0,0])
-        array([[ 1.,  0.,  0.],
-               [ 0.,  1.,  0.],
-               [ 0.,  0.,  1.]])
-    """
-
-    quat = numpy.asmatrix(quat, dtype='Float64')
-    quat /= numpy.sqrt(quat * quat.transpose())
-    a,b,c,d           =  numpy.asarray(quat)[0]
-    aa, bb, cc, dd    =  a*a, b*b, c*c, d*d
-    ab, ac, ad        =  a*b, a*c, a*d
-    bc, bd, cd        =  b*c, b*d, c*d
-
-    Rot = numpy.matrix([[ aa + bb - cc - dd,  2.0 * (-ad + bc),    2.0*(ac + bd)     ],
-                      [ 2.0 * (ad + bc),   aa - bb + cc - dd,  2.0 * (-ab + cd)   ],
-                      [ 2.0 * (ac + bd),    2.0 * (ab + cd),   aa - bb - cc + dd ]])
-    return(Rot)
-
-
-  def quaternion(self,Rot):
-    """ extract the quaternion from a matrix (assume upper 3x3 is rotation only)
-    """
-
-    # find the permutation that is most stable (largest diagonal first)
-    xx, yy, zz = abs(Rot[0,0]), abs(Rot[1,1]), abs(Rot[2,2])
-    if xx > yy and xx > zz:
-      u, v, w = 0, 1, 2
-    else:
-      if yy > xx and yy > zz:
-        u, v, w = 1, 2, 0
-      else:
-        u, v, w = 2, 0, 1
-
-    # fill in the quat
-    r = numpy.sqrt( 1 + Rot[u,u] - Rot[v,v] - Rot[w,w] )
-    r2 = 2.*r
-
-    if r < 1e-6:
-      return numpy.array([1,0,0,0])
-
-    quat = numpy.zeros(4)
-    quat[  0] = (Rot[w,v] - Rot[v,w])/r2
-    quat[1+u] = r/2.
-    quat[1+v] = (Rot[u,v] + Rot[v,u])/r2
-    quat[1+w] = (Rot[w,u] + Rot[u,w])/r2
-
-    return quat
-
 
 
 
@@ -489,12 +577,10 @@ class RegimaticTest(ScriptedLoadableModuleTest):
     applicationLogic.FitSliceToAll()
 
     # apply an initial transform
-    matrixToParent = vtk.vtkMatrix4x4()
-    movingToFixed.GetMatrixTransformToParent(matrixToParent)
-    matrixToParent.SetElement(0,3, 10)
-    matrixToParent.SetElement(1,3, 30)
-    matrixToParent.SetElement(2,3, -20)
-    movingToFixed.SetMatrixTransformToParent(matrixToParent)
+    transform = vtk.vtkTransform()
+    # transform.RotateWXYZ(.1, 1,1,1) # TODO: fix quaternion
+    transform.Translate(50, 33, -32)
+    movingToFixed.SetMatrixTransformToParent(transform.GetMatrix())
 
     mainWindow = slicer.util.mainWindow()
     mainWindow.moduleSelector().selectModule('Regimatic')

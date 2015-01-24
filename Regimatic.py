@@ -1,5 +1,6 @@
-from __main__ import vtk, qt, ctk, slicer
 import numpy
+from __main__ import vtk, qt, ctk, slicer
+from slicer.ScriptedLoadableModule import *
 
 #
 # Regimatic
@@ -23,30 +24,15 @@ class Regimatic:
 # qRegimaticWidget
 #
 
-class RegimaticWidget:
+class RegimaticWidget(ScriptedLoadableModuleWidget):
   def __init__(self, parent = None):
-    if not parent:
-      self.parent = slicer.qMRMLWidget()
-      self.parent.setLayout(qt.QVBoxLayout())
-      self.parent.setMRMLScene(slicer.mrmlScene)
-    else:
-      self.parent = parent
-    self.layout = self.parent.layout()
-    if not parent:
-      self.setup()
-      self.parent.show()
+    ScriptedLoadableModuleWidget.__init__(self,parent)
 
     self.logic = RegimaticLogic()
 
   def setup(self):
     # Instantiate and connect widgets ...
-
-    # reload button
-    self.reloadButton = qt.QPushButton("Reload")
-    self.reloadButton.toolTip = "Reload this module."
-    self.reloadButton.name = "Regimatic Reload"
-    self.layout.addWidget(self.reloadButton)
-    self.reloadButton.connect('clicked()', self.onReload)
+    ScriptedLoadableModuleWidget.setup(self)
 
     #
     # io Collapsible button
@@ -134,7 +120,7 @@ class RegimaticWidget:
     self.stepSizeSlider.decimals = 2
     self.stepSizeSlider.singleStep = 0.01
     self.stepSizeSlider.minimum = 0.01
-    self.stepSizeSlider.maximum = 5
+    self.stepSizeSlider.maximum = 50
     self.stepSizeSlider.toolTip = "Multiple of spacing used when taking an optimization step"
     optFormLayout.addRow("Step Size:", self.stepSizeSlider)
 
@@ -169,13 +155,6 @@ class RegimaticWidget:
     optFormLayout.addRow(self.runButton)
     self.runButton.connect('toggled(bool)', self.onRunButtonToggled)
 
-    # to support quicker development:
-    import os
-    if os.environ['USER'] == 'pieper':
-      self.logic.testingData()
-      self.fixedSelector.setCurrentNode(slicer.util.getNode('MRHead*'))
-      self.movingSelector.setCurrentNode(slicer.util.getNode('neutral*'))
-      self.transformSelector.setCurrentNode(slicer.util.getNode('movingToFixed*'))
 
     # Add vertical spacer
     self.layout.addStretch(1)
@@ -265,6 +244,7 @@ class RegimaticLogic(object):
     self.scratchMatrix = vtk.vtkMatrix4x4()
     self.ijkToRAS = vtk.vtkMatrix4x4()
     self.rasToIJK = vtk.vtkMatrix4x4()
+    self.matrixToParent = vtk.vtkMatrix4x4()
     self.reslice = vtk.vtkImageReslice()
     self.resliceTransform = vtk.vtkTransform()
     self.viewer = None
@@ -306,28 +286,32 @@ class RegimaticLogic(object):
     """Callback for an iteration of the registration method
     """
 
+    # current fixed array - constant while evaluating step
     self.fixedRASArray = self.rasArray(self.fixed, None, self.fixed)
+    # initial value of the metric
     movingRASArray = self.rasArray(self.moving, None, self.fixed)
     self.metric = numpy.sum(numpy.abs(movingRASArray-self.fixedRASArray))
-    m = self.transform.GetMatrixTransformToParent()
+    # current transform
+    self.transform.GetMatrixTransformToParent(self.matrixToParent)
 
-    gradient = self.dfdm()
+    # calculate the gradient with respect to the parameters
+    gradient = self.dfdp()
 
-    self.transform.SetDisableModifiedEvent(True)
+    # take a step along the gradient
     for direction in xrange(3):
-      oldValue = m.GetElement(direction,3)
+      oldValue = self.matrixToParent.GetElement(direction,3)
       step = self.stepSize * gradient[direction]
-      m.SetElement(direction,3,oldValue+step)
-    self.transform.SetDisableModifiedEvent(False)
-    self.transform.InvokePendingModifiedEvent()
+      self.matrixToParent.SetElement(direction,3,oldValue-step)
+    self.transform.SetMatrixTransformToParent(self.matrixToParent)
 
+    # provide a little feedback
     self.iteration += 1
     slicer.util.showStatusMessage("%s: %s (%s)" % (
       str(self.iteration),
       str(self.metric),
       str(gradient)))
 
-  def rasArray(self, volumeNode, matrix=None, targetNode=None, debug=True):
+  def rasArray(self, volumeNode, matrix=None, targetNode=None, debug=False):
     """
     Returns a numpy array of the given node resampled into RAS space
     If given, use the passed matrix as a final RAS to RAS transform
@@ -353,14 +337,14 @@ class RegimaticLogic(object):
     self.reslice.InterpolateOn()
     self.resliceTransform.SetMatrix(self.rasToIJK)
     self.reslice.SetResliceTransform(self.resliceTransform)
-    self.reslice.SetInput( volumeNode.GetImageData() )
+    self.reslice.SetInputData( volumeNode.GetImageData() )
 
     if targetNode:
       bounds = [0,]*6
       targetNode.GetRASBounds(bounds)
-      self.reslice.SetOutputExtent(0, (bounds[1]-bounds[0])/self.sampleSpacing,
-                                   0, (bounds[3]-bounds[2])/self.sampleSpacing,
-                                   0, (bounds[5]-bounds[4])/self.sampleSpacing)
+      self.reslice.SetOutputExtent(0, int((bounds[1]-bounds[0])/self.sampleSpacing),
+                                   0, int((bounds[3]-bounds[2])/self.sampleSpacing),
+                                   0, int((bounds[5]-bounds[4])/self.sampleSpacing))
       self.reslice.SetOutputOrigin(bounds[0],bounds[2],bounds[4])
     self.reslice.SetOutputSpacing([self.sampleSpacing,]*3)
 
@@ -370,48 +354,20 @@ class RegimaticLogic(object):
     shape.reverse()
     rasArray = vtk.util.numpy_support.vtk_to_numpy(rasImage.GetPointData().GetScalars()).reshape(shape)
 
-
     if debug:
       if not self.viewer:
           self.viewer = vtk.vtkImageViewer()
-      self.viewer.SetColorWindow( 500 )
-      self.viewer.SetColorLevel( 200 )
-      self.viewer.SetInput( rasImage )
+          self.viewer.SetSize(500,500)
+      self.viewer.SetColorWindow( 128 )
+      self.viewer.SetColorLevel( 67 )
+      self.viewer.SetInputData( rasImage )
       self.viewer.SetZSlice( rasArray.shape[2]/2 )
       self.viewer.Render()
+      
+
+    slicer.modules.RegimaticWidget.rasArray  = rasArray
 
     return rasArray
-
-  def testingData(self):
-    """Load some default data for development
-    and set up a transform and viewing scenario for it.
-    """
-    if not slicer.util.getNodes('MRHead*'):
-      import os
-      fileName = os.environ['HOME'] + "/Dropbox/data/regmatic/MR-head.nrrd"
-      vl = slicer.modules.volumes.logic()
-      volumeNode = vl.AddArchetypeScalarVolume (fileName, "MRHead", 0, None)
-    if not slicer.util.getNodes('neutral*'):
-      import os
-      fileName = os.environ['HOME'] + "/Dropbox/data/regmatic/neutral.nrrd"
-      vl = slicer.modules.volumes.logic()
-      volumeNode = vl.AddArchetypeScalarVolume (fileName, "neutral", 0, None)
-    if not slicer.util.getNodes('movingToFixed'):
-      # Create transform node
-      transform = slicer.vtkMRMLLinearTransformNode()
-      transform.SetName('movingToFixed')
-      slicer.mrmlScene.AddNode(transform)
-    head = slicer.util.getNode('MRHead')
-    neutral = slicer.util.getNode('neutral')
-    transform = slicer.util.getNode('movingToFixed')
-    neutral.SetAndObserveTransformNodeID(transform.GetID())
-    compositeNodes = slicer.util.getNodes('vtkMRMLSliceCompositeNode*')
-    for compositeNode in compositeNodes.values():
-      compositeNode.SetBackgroundVolumeID(head.GetID())
-      compositeNode.SetForegroundVolumeID(neutral.GetID())
-      compositeNode.SetForegroundOpacity(0.5)
-    applicationLogic = slicer.app.applicationLogic()
-    applicationLogic.FitSliceToAll()
 
 
   """rotation/quaternion utilities
@@ -467,3 +423,85 @@ class RegimaticLogic(object):
     quat[1+w] = (Rot[w,u] + Rot[u,w])/r2
 
     return quat
+
+
+
+
+class RegimaticTest(ScriptedLoadableModuleTest):
+  """
+  This is the test case for your scripted module.
+  Uses ScriptedLoadableModuleTest base class, available at:
+  https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
+  """
+
+  def setUp(self):
+    """ Do whatever is needed to reset the state - typically a scene clear will be enough.
+    """
+    slicer.mrmlScene.Clear(0)
+
+  def runTest(self):
+    """Run as few or as many tests as needed here.
+    """
+    self.setUp()
+    self.test_Regimatic1()
+
+  def test_Regimatic1(self):
+    """Load an ultrasound cine and try to align it to the table"""
+
+    self.delayDisplay("Starting the test",50)
+
+    #
+    # first, get some data
+    #
+    import urllib
+    downloads = (
+        ('http://www.slicer.org/slicerWiki/images/4/43/MR-head.nrrd', 'Head_moving.nrrd', slicer.util.loadVolume),
+        ('http://www.slicer.org/slicerWiki/images/4/43/MR-head.nrrd', 'Head_fixed.nrrd', slicer.util.loadVolume),
+        )
+
+    for url,name,loader in downloads:
+      filePath = slicer.app.temporaryPath + '/' + name
+      if not os.path.exists(filePath) or os.stat(filePath).st_size == 0:
+        print('Requesting download %s from %s...\n' % (name, url))
+        urllib.urlretrieve(url, filePath)
+      if loader:
+        print('Loading %s...\n' % (name,))
+        loader(filePath)
+    self.delayDisplay('Finished with download and loading\n',50)
+
+    volumeNode = slicer.util.getNode(pattern="Head")
+
+    # Create transform node
+    movingToFixed = slicer.vtkMRMLLinearTransformNode()
+    movingToFixed.SetName('movingToFixed')
+    slicer.mrmlScene.AddNode(movingToFixed)
+
+    # set up the nodes for viewing
+    fixed = slicer.util.getNode('Head_fixed')
+    moving = slicer.util.getNode('Head_moving')
+    moving.SetAndObserveTransformNodeID(movingToFixed.GetID())
+    compositeNodes = slicer.util.getNodes('vtkMRMLSliceCompositeNode*')
+    for compositeNode in compositeNodes.values():
+      compositeNode.SetBackgroundVolumeID(fixed.GetID())
+      compositeNode.SetForegroundVolumeID(moving.GetID())
+      compositeNode.SetForegroundOpacity(0.5)
+    applicationLogic = slicer.app.applicationLogic()
+    applicationLogic.FitSliceToAll()
+
+    # apply an initial transform
+    matrixToParent = vtk.vtkMatrix4x4()
+    movingToFixed.GetMatrixTransformToParent(matrixToParent)
+    matrixToParent.SetElement(0,3, 10)
+    matrixToParent.SetElement(1,3, 30)
+    matrixToParent.SetElement(2,3, -20)
+    movingToFixed.SetMatrixTransformToParent(matrixToParent)
+
+    mainWindow = slicer.util.mainWindow()
+    mainWindow.moduleSelector().selectModule('Regimatic')
+
+    regimaticWidget = slicer.modules.RegimaticWidget
+    regimaticWidget.fixedSelector.setCurrentNode(fixed)
+    regimaticWidget.movingSelector.setCurrentNode(moving)
+
+    self.delayDisplay('Test passed!',50)
+

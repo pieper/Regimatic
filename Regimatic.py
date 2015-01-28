@@ -1,3 +1,4 @@
+import math
 import numpy
 from __main__ import vtk, qt, ctk, slicer
 from slicer.ScriptedLoadableModule import *
@@ -224,6 +225,46 @@ class RegimaticParametricTransform:
     """
     self.currentTransform = transform # needs to be overridden
 
+class RegimaticTranslateSRotatePATransform(RegimaticParametricTransform):
+  """Implements a transform with two parameters, for translation along the superior axis
+  and rotation about the posterior-anterior axis.  Rotation is in radians.
+  """
+  def __init__(self):
+    RegimaticParametricTransform.__init__(self)
+    self.parameters.append(RegimaticParameter("Ts",value=0.,deltaScale=1))
+    self.parameters.append(RegimaticParameter("Rap",value=0.,deltaScale=0.1))
+
+  def getTransform(self, deltaP=(-1,1)):
+    """Puts calculates a matrix from parameters
+    """
+    index,delta = deltaP
+    parameterTs = self.parameters[0]
+    Ts = parameterTs.value
+    parameterRap = self.parameters[1]
+    Rap = parameterRap.value
+    if index == 0:
+      Ts += delta * parameterTs.deltaScale
+    if index == 1:
+      Rap += delta * parameterRap.deltaScale
+    self.currentTransform.Identity()
+    cosRap = math.cos(Rap)
+    sinRap = math.sin(Rap)
+    self.currentTransform.SetElement(0,0, cosRap)
+    self.currentTransform.SetElement(2,2, cosRap)
+    self.currentTransform.SetElement(0,2, sinRap)
+    self.currentTransform.SetElement(2,0, -sinRap)
+    self.currentTransform.SetElement(2,3, Ts)
+    return self.currentTransform
+
+  def setTransform(self, transform):
+    """Calculates parameters from matrix
+    Here we assume that we are given a matrix that only has the
+    S translation and the PA rotation and all else is ignored.
+    """
+    self.parameters[0].value = transform.GetElement(2,3)
+    self.parameters[1].value = math.acos(transform.GetElement(0,0))
+
+
 class RegimaticTranslationTransform(RegimaticParametricTransform):
   """Implements a pure translation transform
   """
@@ -251,6 +292,7 @@ class RegimaticTranslationTransform(RegimaticParametricTransform):
     self.currentTransform.DeepCopy(transform)
     for parameterIndex in xrange(3):
       self.parameters[parameterIndex].value = transform.GetElement(parameterIndex,3)
+
 
 class RegimaticRigidTransform(RegimaticTranslationTransform):
   """Implements a pure rigid transform
@@ -364,7 +406,8 @@ class RegimaticLogic(ScriptedLoadableModuleLogic):
     self.stepSize = 1
 
     # the parametricTransform
-    self.parametricTransform = RegimaticTranslationTransform()
+    #self.parametricTransform = RegimaticTranslationTransform()
+    self.parametricTransform = RegimaticTranslateSRotatePATransform()
     #self.parametricTransform = RegimaticRigidTransform() #TODO: fix quaternion
 
     # slicer nodes set by the GUI
@@ -534,7 +577,7 @@ class RegimaticTest(ScriptedLoadableModuleTest):
     self.test_Regimatic1()
 
   def test_Regimatic1(self):
-    """Load an ultrasound cine and try to align it to the table"""
+    """Set up two copies of the same data and try to recover identity"""
 
     self.delayDisplay("Starting the test",50)
 
